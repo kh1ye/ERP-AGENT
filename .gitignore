@@ -36,6 +36,13 @@ src/download/
 .planning/
 tmp/
 
+# ============ 本地说明与面试材料（不发布） ============
+NOTICE.md
+ERP-Agent_项目架构与技术解析.md
+docs/DEMO_GUIDE.md
+docs/INTERVIEW_OVERVIEW.md
+docs/TEST_REPORT.md
+
 # ============ 日志 ============
 *.log
 

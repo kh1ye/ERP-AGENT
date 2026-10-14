@@ -16,21 +16,6 @@
 - 结构化文档输出（Markdown/HTML/CSV/JSON）
 - 人工审批流程（HITL — Human-in-the-Loop）
 
-## 来源与个人贡献
-
-本仓库基于 [wodrake/ERP-AGENT-open-source](https://github.com/wodrake/ERP-AGENT-open-source) 持续开发，并保留原始 Git 提交历史。当前版本由仓库维护者围绕本地可运行与面试演示继续完成工程化改造，主要包括 Agent 编排与记忆集成、MCP/ERP 工具接入、Docker 用户级沙箱、HITL 订单审批及恢复、前端交互修复、Windows 本地部署、测试验证和配套文档。
-
-课程环境提供的 Java ERP 服务属于外部业务系统，本仓库不包含其源码，也不将上游基线或外部 ERP 服务声明为个人从零编写。来源与再使用说明见 [NOTICE.md](NOTICE.md)。
-
-## 面试与演示材料
-
-本仓库当前作为个人主导完成的智能采购 Agent 项目使用。项目工作的重点是 Agent 编排、MCP/ERP 集成、状态持久化、沙箱执行、人工审批、前端交互和端到端验证；课程老师授权的 ERP 服务是外部业务系统，本仓库不包含其 Java 源码。
-
-- [面试项目总览](docs/INTERVIEW_OVERVIEW.md)：项目定位、个人工作、技术亮点、简历表述和常见追问。
-- [测试报告](docs/TEST_REPORT.md)：自动化验证、真实 ERP 业务测试、测试数据及能力边界。
-- [演示指南](docs/DEMO_GUIDE.md)：Windows 启动顺序、检查方法和 5–8 分钟演示脚本。
-- [完整架构解析](ERP-Agent_项目架构与技术解析.md)：适合深入学习和技术答辩。
-
 ---
 
 ## 2026-09-25 更新：可切换审查路由与模型配对评测
