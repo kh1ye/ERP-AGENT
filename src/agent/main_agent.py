@@ -39,7 +39,7 @@ def _upload_project_to_sandbox(sandbox) -> bool:
     跳过 node_modules / .git / __pycache__ / .next 等无关目录。
     """
     skip_patterns = [
-        ".git", "__pycache__", "node_modules", ".next", ".venv",
+        ".git", ".local","__pycache__", "node_modules", ".next", ".venv",
         ".env", ".env.*", "*.pem", "*.key",
         ".eggs", "*.pyc", "*.pyo", ".DS_Store", ".docker",
         "*.png", "*.jpg", "*.jpeg", "*.gif",  # 生成物不传

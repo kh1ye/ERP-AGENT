@@ -257,17 +257,16 @@ export function useChat() {
       setInterrupted(false);
       setInterruptData(null);
       setStreaming(true);
-      resetAssistantState();
 
       start((onChunk, signal) =>
         resumeChat(
-          { thread_id: threadId, resume_data: resumeData },
+          { thread_id: threadId, resume: resumeData },
           onChunk,
           signal
         )
       );
     },
-    [threadId, start, resetAssistantState]
+    [threadId, start]
   );
 
   const newChat = useCallback(() => {
@@ -284,17 +283,21 @@ export function useChat() {
   }, [abort, resetAssistantState]);
 
   const loadThread = useCallback(
-    (id: string, msgs: ChatMessage[]) => {
+    (id: string, msgs: ChatMessage[], pendingInterrupt: InterruptData | null = null) => {
       abort();
       setThreadId(id);
       setMessages(msgs);
       setStreaming(false);
-      setInterrupted(false);
-      setInterruptData(null);
+      setInterrupted(Boolean(pendingInterrupt));
+      setInterruptData(pendingInterrupt);
       setError(null);
-      resetAssistantState();
+      const lastAssistant = [...msgs].reverse().find((msg) => msg.role === "assistant");
+      assistantMsgRef.current = lastAssistant?.content || "";
+      toolCallsRef.current = lastAssistant?.toolCalls ? [...lastAssistant.toolCalls] : [];
+      currentToolIdRef.current =
+        toolCallsRef.current.find((tool) => tool.status === "running")?.id || "";
     },
-    [abort, resetAssistantState]
+    [abort]
   );
 
   return {

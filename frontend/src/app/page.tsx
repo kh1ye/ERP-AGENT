@@ -5,7 +5,7 @@ import Sidebar from "@/components/sidebar/Sidebar";
 import ChatArea from "@/components/chat/ChatArea";
 import { useChat } from "@/hooks/useChat";
 import { useHistory } from "@/hooks/useHistory";
-import { getMessages } from "@/lib/api";
+import { getChatState, getMessages } from "@/lib/api";
 import { ChatMessage } from "@/lib/types";
 
 export default function Home() {
@@ -13,20 +13,29 @@ export default function Home() {
   const history = useHistory();
   const wasStreaming = useRef(false);
 
-  // 聊天结束后自动刷新历史列表
-  useEffect(() => {
-    if (wasStreaming.current && !chat.streaming) {
-      // 延迟 500ms 等待后端保存完成
-      const timer = setTimeout(() => history.refresh(), 500);
-      return () => clearTimeout(timer);
-    }
-    wasStreaming.current = chat.streaming;
-  }, [chat.streaming, history]);
+// 聊天结束后自动刷新一次历史列表
+const refreshHistory = history.refresh;
+
+useEffect(() => {
+  const justFinished = wasStreaming.current && !chat.streaming;
+  wasStreaming.current = chat.streaming;
+
+  if (!justFinished) return;
+
+  const timer = setTimeout(() => {
+    refreshHistory();
+  }, 500);
+
+  return () => clearTimeout(timer);
+}, [chat.streaming, refreshHistory]);
 
   const handleSelectThread = useCallback(
     async (threadId: string) => {
       try {
-        const data = await getMessages(threadId);
+        const [data, state] = await Promise.all([
+          getMessages(threadId),
+          getChatState(threadId),
+        ]);
         const msgs: ChatMessage[] = (data.messages || data || []).map(
           (m: Record<string, unknown>, idx: number) => ({
             id: (m.id as string) || `msg-${idx}`,
@@ -37,7 +46,7 @@ export default function Home() {
             timestamp: (m.timestamp as number) || Date.now(),
           })
         );
-        chat.loadThread(threadId, msgs);
+        chat.loadThread(threadId, msgs, state.interrupt_data || null);
       } catch {
         // 加载失败静默处理
       }

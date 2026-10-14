@@ -32,6 +32,9 @@ next-env.d.ts
 
 # ============ 生成文件 / 下载目录 ============
 src/download/
+.local/
+.planning/
+tmp/
 
 # ============ 日志 ============
 *.log

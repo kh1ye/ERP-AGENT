@@ -39,6 +39,78 @@ PHASE_LABELS = {
 }
 
 
+def _interrupt_values_from_stream(value):
+    """递归提取 LangGraph v1/subgraph 流中携带的中断值。"""
+    if isinstance(value, dict):
+        for key, nested in value.items():
+            if key in ("__interrupt__", "interrupts"):
+                items = nested if isinstance(nested, (list, tuple)) else (nested,)
+                for item in items:
+                    yield item.value if hasattr(item, "value") else item
+            else:
+                yield from _interrupt_values_from_stream(nested)
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            yield from _interrupt_values_from_stream(item)
+
+
+def _interrupt_values_from_snapshot(state):
+    """从持久化检查点读取未被流事件暴露的 HITL 中断。"""
+    for task in getattr(state, "tasks", ()) or ():
+        for item in getattr(task, "interrupts", ()) or ():
+            yield item.value if hasattr(item, "value") else item
+
+
+def _interrupt_data(interrupt_value: object) -> dict | None:
+    """把 LangGraph/DeepAgents 的中断载荷转换为前端统一协议。"""
+    if not isinstance(interrupt_value, dict):
+        return None
+
+    if interrupt_value.get("type") == "order_info_request":
+        return {
+            "interrupt_type": "order_info_supplement",
+            "missing_fields": interrupt_value.get("missing_fields", []),
+            "message": interrupt_value.get("message", ""),
+            "extracted_data": interrupt_value.get("current_data", {}),
+        }
+
+    if "action_requests" in interrupt_value:
+        action_requests = interrupt_value.get("action_requests") or []
+        if isinstance(action_requests, list) and action_requests:
+            first_action = action_requests[0]
+        elif isinstance(action_requests, dict):
+            first_action = action_requests
+        else:
+            first_action = {}
+
+        tool_name = first_action.get("name", "") if isinstance(first_action, dict) else ""
+        tool_args = first_action.get("args", {}) if isinstance(first_action, dict) else {}
+        display_args = tool_args
+        raw_order_data = tool_args.get("order_data") if isinstance(tool_args, dict) else None
+        if isinstance(raw_order_data, str):
+            try:
+                display_args = json.loads(raw_order_data)
+            except json.JSONDecodeError:
+                pass
+        elif isinstance(raw_order_data, dict):
+            display_args = raw_order_data
+
+        return {
+            "interrupt_type": "hitl_approval",
+            "tool_name": tool_name,
+            "tool_args": tool_args,
+            "order_data": display_args,
+        }
+
+    tool_args = interrupt_value.get("tool_args", interrupt_value)
+    return {
+        "interrupt_type": "hitl_approval",
+        "tool_name": interrupt_value.get("tool_name", ""),
+        "tool_args": tool_args,
+        "order_data": tool_args,
+    }
+
+
 async def stream_chat_response(
     message: str,
     thread_id: str,
@@ -103,11 +175,11 @@ async def stream_chat_response(
         async for namespace, chunk_type, chunk in session.agent.astream(
             input=current_input,
             config=config,
-            stream_mode=["messages", "values", "custom"],
+            stream_mode=["messages", "values", "updates", "custom"],
             subgraphs=True,
         ):
             # ===== 中断检测 + 结构化 Harness 状态读取（必须在 messages 处理之前）=====
-            if chunk_type == "values":
+            if chunk_type in ("values", "updates"):
                 if isinstance(chunk, dict):
                     if not namespace and chunk.get("review_decision"):
                         decision = chunk["review_decision"]
@@ -153,38 +225,13 @@ async def stream_chat_response(
                                     "todos": plan_items,
                                 })
 
-                    # --- 中断检测 ---
-                    if chunk.get("interrupts"):
-                        for interrupt_item in chunk["interrupts"]:
-                            interrupt_value = (
-                                interrupt_item.value
-                                if hasattr(interrupt_item, "value")
-                                else interrupt_item
-                            )
-                            if isinstance(interrupt_value, dict):
-                                # 判断中断类型
-                                if interrupt_value.get("type") == "order_info_request":
-                                    yield sse_event("interrupt", {
-                                        "interrupt_type": "order_info_supplement",
-                                        "missing_fields": interrupt_value.get("missing_fields", []),
-                                        "message": interrupt_value.get("message", ""),
-                                        "extracted_data": interrupt_value.get("current_data", {}),
-                                    })
-                                elif "action_requests" in interrupt_value:
-                                    yield sse_event("interrupt", {
-                                        "interrupt_type": "hitl_approval",
-                                        "tool_name": interrupt_value.get("tool_name", ""),
-                                        "tool_args": interrupt_value.get("action_requests", {}),
-                                        "order_data": interrupt_value.get("action_requests", {}),
-                                    })
-                                else:
-                                    # 通用中断（interrupt_on 触发的审批）
-                                    yield sse_event("interrupt", {
-                                        "interrupt_type": "hitl_approval",
-                                        "tool_name": interrupt_value.get("tool_name", ""),
-                                        "tool_args": interrupt_value.get("tool_args", interrupt_value),
-                                        "order_data": interrupt_value.get("tool_args", interrupt_value),
-                                    })
+                    # --- 中断检测（兼容子图嵌套的 __interrupt__）---
+                    interrupt_values = list(_interrupt_values_from_stream(chunk))
+                    if interrupt_values:
+                        for interrupt_value in interrupt_values:
+                            data = _interrupt_data(interrupt_value)
+                            if data:
+                                yield sse_event("interrupt", {"data": data})
 
                         # 保存当前累积的消息
                         if assistant_content:
@@ -329,6 +376,29 @@ async def stream_chat_response(
                             source = "order"
                     yield sse_event("token", {"content": content, "source": source})
 
+        # 子 Agent 的 HITL 中断不一定出现在外层 stream chunk 中，但一定会
+        # 写入 LangGraph 检查点。流结束时再读一次状态，避免页面只留下
+        # “工具运行中”而没有审批卡片。
+        state = await session.agent.aget_state(config)
+        pending_interrupts = list(_interrupt_values_from_snapshot(state))
+        if pending_interrupts:
+            for interrupt_value in pending_interrupts:
+                data = _interrupt_data(interrupt_value)
+                if data:
+                    yield sse_event("interrupt", {"data": data})
+            if assistant_content:
+                display_messages.append({
+                    "id": str(uuid.uuid4()),
+                    "role": "assistant",
+                    "content": assistant_content,
+                    "toolCalls": tool_calls_buffer,
+                    "timestamp": datetime.now().isoformat(),
+                })
+            await agent_loader.save_display_messages(thread_id, display_messages)
+            await agent_loader.save_harness_trace(thread_id, harness_trace)
+            yield sse_event("done", {"thread_id": thread_id, "interrupted": True})
+            return
+
         # ===== 流正常结束 =====
         if assistant_content:
             display_messages.append({
@@ -425,7 +495,17 @@ async def chat_state(thread_id: str):
     try:
         state = await session.agent.aget_state(config)
         is_interrupted = bool(state.next) if state else False
-        return {"thread_id": thread_id, "interrupted": is_interrupted}
+        interrupt_data = None
+        if state:
+            for interrupt_value in _interrupt_values_from_snapshot(state):
+                interrupt_data = _interrupt_data(interrupt_value)
+                if interrupt_data:
+                    break
+        return {
+            "thread_id": thread_id,
+            "interrupted": is_interrupted,
+            "interrupt_data": interrupt_data,
+        }
     except Exception:
         return {"thread_id": thread_id, "interrupted": False}
 

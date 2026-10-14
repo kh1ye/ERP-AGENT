@@ -29,7 +29,6 @@ export interface SSEToolEndEvent {
 
 export interface SSEInterruptEvent {
   type: "interrupt";
-  interrupt_type: "hitl_approval" | "order_info_supplement";
   data: InterruptData;
 }
 
@@ -134,7 +133,7 @@ export interface ChatRequest {
 
 export interface ResumeRequest {
   thread_id: string;
-  resume_data: Record<string, unknown>;
+  resume: Record<string, unknown>;
 }
 
 // ===== 功能卡片 =====
